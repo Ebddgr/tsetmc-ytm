@@ -1,10 +1,13 @@
 {
   "manifest_version": 3,
   "name": "TSETMC YTM اوراق",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "نمایش بازدهی تا سررسید کنار قیمت اوراق در دیده‌بان بازار TSETMC",
   "host_permissions": [
     "https://www.ifb.ir/*"
+  ],
+  "permissions": [
+    "storage"
   ],
   "background": {
     "service_worker": "background.js"

@@ -20,6 +20,10 @@
   // board, so a tick only re-sorts when some YTM value actually changed.
   let sortDirty = true;
   const bondMetadata = new Map();
+  // Pending symbols retry the worker hourly (matching the worker's own
+  // negative-cache window) instead of being cached as permanently missing.
+  const RETRY_PENDING_MS = 60 * 60_000;
+  const PENDING_TITLE = 'در انتظار شناسه از IFB…';
 
   const persianDigits = '۰۱۲۳۴۵۶۷۸۹';
   const arabicDigits = '٠١٢٣٤٥٦٧٨٩';
@@ -213,7 +217,11 @@
     if (cell.textContent !== text) sortDirty = true;
     cell.textContent = text;
     cell.dataset.ytmValue = result ? String(result.value) : '';
-    cell.removeAttribute('title');
+    // IFB publishes its own YTM for listed bonds; surface it as a hover
+    // tooltip for cross-checking without adding a column.
+    const official = Number.isFinite(metadata?.referenceYtm) ? metadata.referenceYtm : null;
+    if (official === null) cell.removeAttribute('title');
+    else cell.title = `بازده رسمی IFB: ${official.toFixed(2)}٪`;
   }
 
   function updateRow(row) {
@@ -222,25 +230,35 @@
     const symbol = cells[0]?.innerText.trim() || '';
     const name = cells[1]?.innerText.trim() || '';
     const identity = `${symbol} ${name}`;
-    const metadata = bondMetadata.get(symbol);
-    if (!metadata) {
+    const entry = bondMetadata.get(symbol);
+    if (!entry || entry.pending) {
       row.classList.remove(ROW_CLASS);
-      for (const cell of Object.values(ytmCells)) { cell.textContent = ''; cell.dataset.ytmValue = ''; }
-      if (!bondMetadata.has(symbol) && chrome.runtime?.sendMessage) {
-        bondMetadata.set(symbol, null);
+      for (const cell of Object.values(ytmCells)) { cell.textContent = ''; cell.dataset.ytmValue = ''; cell.removeAttribute('title'); }
+      const now = Date.now();
+      if (chrome.runtime?.sendMessage && (!entry || now - entry.at >= RETRY_PENDING_MS)) {
+        bondMetadata.set(symbol, { pending: true, at: now });
         try {
           chrome.runtime.sendMessage({ type: 'tsetmc-ytm-bond', symbol, name }, response => {
             if (chrome.runtime.lastError) return;
-            if (response?.status !== 'ok') return;
+            // Still unresolved: the pending entry stays and the ask repeats
+            // after RETRY_PENDING_MS, so an unreachable IFB never becomes a
+            // permanent blank for a bond that lists there later.
+            if (response?.status !== 'ok' || !response.metadata) return;
             bondMetadata.set(symbol, response.metadata);
-            const currentSymbol = [...row.children]
-              .filter(cell => !cell.classList.contains(CELL_CLASS))[0]?.innerText.trim();
-            if (currentSymbol === symbol) updateRow(row);
+            // Refresh every row carrying this symbol, not just the asker —
+            // the same instrument can appear in more than one row.
+            for (const rowEl of document.querySelectorAll(ROW_SELECTOR)) {
+              const first = [...rowEl.children].filter(cell => !cell.classList.contains(CELL_CLASS))[0];
+              if (first?.innerText.trim() === symbol) updateRow(rowEl);
+            }
           });
-        } catch { /* extension context invalidated, e.g. after a reload */ }
+        } catch { /* extension context invalidated, e.g. after a reload */ bondMetadata.delete(symbol); }
+      } else if (entry) {
+        for (const cell of Object.values(ytmCells)) cell.title = PENDING_TITLE;
       }
       return;
     }
+    const metadata = entry;
     row.classList.add(ROW_CLASS);
 
     const officialMaturity = metadata?.maturity;

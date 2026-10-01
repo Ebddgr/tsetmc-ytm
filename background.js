@@ -1,8 +1,16 @@
 const IFB_BASE = 'https://www.ifb.ir';
 const CACHE_TTL = 30 * 60_000;
+// IFB can hang when it is filtered or overloaded; an MV3 worker must always
+// answer the content script, so every fetch is bounded.
+const FETCH_TIMEOUT = 8_000;
+// Bonds resolved at runtime are persisted so a service-worker or browser
+// restart does not re-fetch them from a slow IFB.
+const RUNTIME_STORAGE_KEY = 'runtimeBonds';
 const detailCache = new Map();
 let catalogPromise = null;
 let liveIndex = null;
+const runtimeRecords = new Map(); // normalized symbol -> raw catalog-format record
+let runtimeLoaded = false;
 
 const persianDigits = '۰۱۲۳۴۵۶۷۸۹';
 const arabicDigits = '٠١٢٣٤٥٦٧٨٩';
@@ -60,25 +68,49 @@ function symbolCandidates(symbol) {
   if (/[0-9]$/.test(key) && key.replace(/[0-9]$/, '').length >= 3) candidates.push(key.replace(/[0-9]$/, ''));
   return candidates;
 }
+async function loadRuntimeRecords() {
+  if (runtimeLoaded) return;
+  runtimeLoaded = true;
+  try {
+    const storage = chrome.storage?.local;
+    if (!storage) return;
+    const result = await storage.get(RUNTIME_STORAGE_KEY);
+    for (const row of result?.[RUNTIME_STORAGE_KEY] || []) {
+      const key = normalize(row.symbol);
+      if (key) runtimeRecords.set(key, row);
+    }
+  } catch { /* storage unavailable: runtime records stay session-only */ }
+}
+function persistRuntimeRecords() {
+  try {
+    chrome.storage?.local?.set({ [RUNTIME_STORAGE_KEY]: [...runtimeRecords.values()] });
+  } catch { /* quota or context loss: the in-memory copy still serves this session */ }
+}
+function parseCatalogItem(row) {
+  return {
+    officialSymbol: normalize(row.officialSymbol || row.symbol), name: row.name || '', category: row.category || '',
+    parValue: parseNumber(row.parValue), issue: parseJalali(row.issue), maturity: parseJalali(row.maturity),
+    rate: parseNumber(row.rate) === null ? null : parseNumber(row.rate) / 100,
+    intervalMonths: parseInterval(row.interval), source: row.pageId ? IFB_BASE + '/Instruments.aspx?id=' + row.pageId : null,
+  };
+}
 async function loadCatalog() {
   if (!catalogPromise) {
-    catalogPromise = fetch(chrome.runtime.getURL('bonds.json')).then(response => {
+    catalogPromise = loadRuntimeRecords().then(() => fetch(chrome.runtime.getURL('bonds.json'))).then(response => {
       if (!response.ok) throw new Error('catalog HTTP ' + response.status);
       return response.json();
     }).then(rows => {
       const index = new Map();
       for (const row of rows) {
-        const item = {
-          officialSymbol: normalize(row.officialSymbol || row.symbol), name: row.name || '', category: row.category || '',
-          parValue: parseNumber(row.parValue), issue: parseJalali(row.issue), maturity: parseJalali(row.maturity),
-          rate: parseNumber(row.rate) === null ? null : parseNumber(row.rate) / 100,
-          intervalMonths: parseInterval(row.interval), source: row.pageId ? IFB_BASE + '/Instruments.aspx?id=' + row.pageId : null,
-        };
+        const item = parseCatalogItem(row);
         index.set(normalize(row.symbol), item);
         index.set(item.officialSymbol, item);
       }
+      // Runtime-resolved bonds from earlier sessions merge into the bundled
+      // catalog on every service-worker start.
+      for (const [key, row] of runtimeRecords) index.set(key, parseCatalogItem(row));
       return index;
-    });
+    }).catch(error => { catalogPromise = null; throw error; });
   }
   return catalogPromise;
 }
@@ -93,9 +125,11 @@ function parseIfbRows(html) {
     const hrefMatch = match[0].match(/href='([^']+)'/);
     const cells = stripTags(match[3]).replace(/\r/g, '').split('\n').map(line => line.trim()).filter(Boolean);
     if (!hrefMatch || !cells.length) continue;
+    const titleMatch = match[0].match(/title='([^']*)'/);
     rows.set(normalize(match[2]), {
       pageId: match[1],
       href: new URL(hrefMatch[1], IFB_BASE).href,
+      title: titleMatch ? titleMatch[1].trim() : '',
       referencePrice: parseNumber(cells[0]),
       referenceLastTrade: parseJalali(cells[1]),
       referenceMaturity: parseJalali(cells[2]),
@@ -105,9 +139,15 @@ function parseIfbRows(html) {
   return rows;
 }
 async function fetchIfbHtml(path) {
-  const response = await fetch(IFB_BASE + path);
-  if (!response.ok) throw new Error('IFB HTTP ' + response.status);
-  return response.text();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
+  try {
+    const response = await fetch(IFB_BASE + path, { signal: controller.signal });
+    if (!response.ok) throw new Error('IFB HTTP ' + response.status);
+    return await response.text();
+  } finally {
+    clearTimeout(timer);
+  }
 }
 async function loadLiveIndex() {
   if (liveIndex && Date.now() - liveIndex.time < CACHE_TTL) return liveIndex.index;
@@ -159,6 +199,46 @@ async function loadBondDetail(pageId) {
   detailCache.set(pageId, detail);
   return detail;
 }
+// Coupon-less families whose IFB row alone is enough when the instrument
+// page cannot be fetched: treasury bills and credit certificates carry no
+// nominal rate and their par value is the standard 1,000,000 IRR.
+const ZERO_FAMILY_WORDS = /اسناد\s*خزانه|اخزا|گام|گواهي\s*اعتبار|گواهی\s*اعتبار/i;
+function fmtJalali(date) {
+  return date ? date.year + '/' + String(date.month).padStart(2, '0') + '/' + String(date.day).padStart(2, '0') : null;
+}
+// Live path for symbols missing from the bundled catalog: match the symbol
+// on IFB's published YTM list, then read the instrument page for specs.
+// Same discipline as refresh_catalog.js — a coupon bond with incomplete
+// specs is refused rather than guessed, so it stays blank until a later
+// retry instead of showing a wrong YTM.
+async function resolveRuntimeBond(symbol, name) {
+  const index = await loadLiveIndex();
+  const candidates = symbolCandidates(symbol);
+  const live = candidates.map(candidate => index.get(candidate)).find(Boolean);
+  if (!live) return null;
+  // A stripped-digit alias (اخزا5012 -> اخزا501) is only trusted when the
+  // maturity embedded in the row name confirms the IFB record.
+  if (live !== index.get(candidates[0])
+    && !maturitiesFromName(name).some(date => sameJalaliDate(date, live.referenceMaturity))) return null;
+  let detail = null;
+  try { detail = await loadBondDetail(live.pageId); } catch { /* reference data only */ }
+  const zeroFamily = ZERO_FAMILY_WORDS.test(live.title || name || '');
+  if (!detail && !zeroFamily) return null;
+  const rate = detail?.rate ?? 0;
+  const zeroCoupon = !rate;
+  if (!zeroCoupon && (!detail.issue || !detail.maturity || !detail.intervalMonths || !detail.parValue)) return null;
+  const maturity = detail?.maturity || (zeroCoupon ? live.referenceMaturity : null);
+  if (!maturity) return null;
+  return {
+    symbol, officialSymbol: symbol, pageId: live.pageId,
+    name: live.title || name || '', category: '',
+    parValue: String(detail?.parValue ?? 1_000_000),
+    issue: fmtJalali(detail?.issue) || fmtJalali(maturity),
+    maturity: fmtJalali(maturity),
+    rate: zeroCoupon ? '0' : String(rate),
+    interval: zeroCoupon ? '0 ماه' : detail.intervalMonths + ' ماه',
+  };
+}
 async function loadBond(symbol, name) {
   const candidates = symbolCandidates(symbol);
   const catalog = await loadCatalog();
@@ -170,13 +250,27 @@ async function loadBond(symbol, name) {
     guessed = candidate !== candidates[0];
     break;
   }
-  if (!metadata) return { status: 'notFound' };
   // Guessed aliases (e.g. اراد1904 -> اراد190) are only trusted when the
   // maturity embedded in the row name confirms the catalog record, so a
   // similarly-numbered but different bond can never hijack the metadata.
-  if (guessed && !maturitiesFromName(name).some(date => sameJalaliDate(date, metadata.maturity))) {
-    return { status: 'notFound' };
+  if (metadata && guessed && !maturitiesFromName(name).some(date => sameJalaliDate(date, metadata.maturity))) {
+    metadata = null;
   }
+  if (!metadata) {
+    // Not in the bundled catalog: resolve live from IFB and remember it for
+    // future sessions. Failure leaves the row blank until the content
+    // script's next hourly retry.
+    try {
+      const record = await resolveRuntimeBond(symbol, name);
+      if (record) {
+        metadata = parseCatalogItem(record);
+        catalog.set(normalize(symbol), metadata);
+        runtimeRecords.set(normalize(symbol), record);
+        persistRuntimeRecords();
+      }
+    } catch { /* IFB unreachable or timed out; retried later */ }
+  }
+  if (!metadata) return { status: 'notFound' };
   try {
     const index = await loadLiveIndex();
     const live = candidates.map(candidate => index.get(candidate)).find(Boolean);
@@ -184,7 +278,7 @@ async function loadBond(symbol, name) {
       Object.assign(metadata, live);
       if (!metadata.maturity && live.referenceMaturity) metadata.maturity = live.referenceMaturity;
     }
-  } catch { /* bundled official metadata remains usable while IFB is unavailable */ }
+  } catch { /* bundled/runtime metadata remains usable while IFB is unavailable */ }
   return { status: 'ok', metadata };
 }
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -193,5 +287,5 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   return true;
 });
 if (typeof globalThis !== 'undefined') {
-  globalThis.__TSETMC_YTM_BG_TEST__ = { parseIfbRows, parseInstrument, maturitiesFromName, symbolCandidates, parseNumber, parseJalali, parseInterval, normalize };
+  globalThis.__TSETMC_YTM_BG_TEST__ = { parseIfbRows, parseInstrument, maturitiesFromName, symbolCandidates, parseNumber, parseJalali, parseInterval, normalize, resolveRuntimeBond, parseCatalogItem, fmtJalali };
 }

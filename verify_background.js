@@ -2,7 +2,7 @@ const fs = require('fs'), vm = require('vm');
 class FakeDOMParser { parseFromString() { return { querySelectorAll: () => [] }; } }
 const listeners = [];
 const context = {
-  console, URL, DOMParser: FakeDOMParser,
+  console, URL, DOMParser: FakeDOMParser, setTimeout, clearTimeout, AbortController,
   fetch: async url => {
     if (String(url).endsWith('bonds.json')) return { ok: true, json: async () => JSON.parse(fs.readFileSync('bonds.json', 'utf8')) };
     throw new Error('offline');
