@@ -1,0 +1,39 @@
+name: release
+
+# Pushing a v* tag (whose version must match manifest.json) runs the verify
+# suites, packages the extension and publishes a GitHub Release with the zip.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    uses: ./.github/workflows/verify.yml
+
+  release:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check tag matches manifest version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          ACTUAL=$(node -p "require('./manifest.json').version")
+          if [ "$VERSION" != "$ACTUAL" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match manifest.json version $ACTUAL" >&2
+            exit 1
+          fi
+      - name: Package extension
+        run: |
+          node package_release.js
+          python3 -m zipfile -t dist/*.zip
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/*.zip --title "$GITHUB_REF_NAME" --generate-notes

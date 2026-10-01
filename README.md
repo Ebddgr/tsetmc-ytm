@@ -61,5 +61,6 @@ node refresh_catalog.js
 
 - `verify_background.js`، `verify_liveindex.js`، `verify_js.js`، `verify_catalog.js`، `verify_runtime.js` — آزمون‌های خودکار (همه سبز).
 - `make_icons.js` — بازتولید آیکون‌ها؛ `refresh_catalog.js` — به‌روزرسانی کاتالوگ.
+- `package_release.js` — بسته‌بندی فایل‌های اجرایی افزونه در `dist/tsetmc-ytm-<نسخه>.zip` (بدون وابستگی؛ با push تگ `v*` اکشن `release` خودکار زیپ را در GitHub Release منتشر می‌کند).
 - `serve_dryrun.js` + `seed.json` + `styles.css` — تجهیزات آزمون تزریقی (dry-run): سرور محلی 127.0.0.1:8765 برای تزریق `content.js` در صفحهٔ زندهٔ TSETMC بدون نصب افزونه؛ در صفحه، بخش‌های stub و seed و styles و سپس `content.b64` را از همین سرور fetch و eval کنید.
 - `.ifb-ytm-snapshot.html` — نمونهٔ آفلاین صفحهٔ ytm.aspx برای آزمودن تجزیه‌گر.

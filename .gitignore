@@ -3,3 +3,6 @@
 
 # Large local test snapshot (fetchable via refresh_catalog.js; see README)
 .ifb-ytm-snapshot.html
+
+# Packaged release archives
+dist/
