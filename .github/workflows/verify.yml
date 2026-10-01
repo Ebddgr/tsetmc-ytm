@@ -1,0 +1,28 @@
+name: verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Run verification suites
+        run: |
+          node verify_background.js
+          node verify_js.js
+          node verify_catalog.js
+          node verify_runtime.js
+          # verify_liveindex reads the offline IFB snapshot, a regenerable
+          # local fixture kept out of the repo via .gitignore.
+          if [ -f .ifb-ytm-snapshot.html ]; then
+            node verify_liveindex.js
+          else
+            echo "verify_liveindex skipped: snapshot fixture not present"
+          fi
