@@ -1,0 +1,35 @@
+#main > div[id] {
+  width: 1457px !important;
+  height: 17px !important;
+  line-height: 17px !important;
+}
+
+#main > div[id] > div {
+  height: 17px !important;
+  line-height: 17px !important;
+  vertical-align: top !important;
+}
+
+.tsetmc-ytm-cell,
+.tsetmc-ytm-header {
+  width: 55px;
+  direction: ltr;
+  text-align: center;
+}
+
+.tsetmc-ytm-cell {
+  color: #057a55;
+  font-weight: 700;
+}
+
+.tsetmc-ytm-header {
+  color: #057a55;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.tsetmc-ytm-header[data-sort-mark]::after {
+  content: attr(data-sort-mark);
+  margin-left: 2px;
+  font-size: 8px;
+}

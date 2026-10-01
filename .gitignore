@@ -1,0 +1,5 @@
+# Buff state (machine-generated notes, not part of the extension)
+.freebuff/
+
+# Large local test snapshot (fetchable via refresh_catalog.js; see README)
+.ifb-ytm-snapshot.html
