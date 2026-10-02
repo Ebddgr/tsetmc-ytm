@@ -110,7 +110,7 @@ if (pinned.textContent !== '41.93٪') {
 // On-coupon settlement: a trade landing exactly on a coupon date must accrue
 // 0 (treated like at-issue, dirty = clean). Strict-< previously selected the
 // prior coupon and charged a full period, mispricing these four reference
-// rows by 2.9–13.6 points (کرمان5126: 11.15 vs 25.07). Pinned to the fixed
+// rows by 2.9–13.6 points (کرمان5126: 11.51 vs 25.07). Pinned to the fixed
 // values; each trade date is its bond's coupon date.
 const onCouponSamples = [
   // symbol, price, trade(=coupon date), issue, maturity, rate%, months, pinned, ref
