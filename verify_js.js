@@ -66,4 +66,45 @@ if (y.startOfUtcDay(anchorDay + 15.5 * 3_600_000) !== anchorDay) {
   console.error('startOfUtcDay does not truncate to day start');
   failed++;
 }
+// Defect regression: day clamping stacks اراد115/116's schedule so the final
+// coupon lands one day after the previous (…1406/6/29 > 1406/6/30). The
+// accrual prorating used to divide by (wholeDays-1)=0, NaN the cash flows and
+// collapse the bisection onto its -0.99 floor, rendering "-99.00٪". Values
+// pinned to the reference file's official YTM.
+const stubMetadata = {
+  parValue: 1000000,
+  issue: date('1401-06-30'),
+  maturity: date('1406-06-30'),
+  rate: 0.18,
+  intervalMonths: 6,
+};
+const stubCases = [
+  ['اراد115', 843560, '1405-06-30', 41.931657, '41.93٪'],
+  ['اراد116', 846130, '1405-06-16', 40.651474, '40.65٪'],
+];
+for (const [symbol, price, trade, expected, display] of stubCases) {
+  const result = y.calculateYtm(price, stubMetadata.maturity, symbol, stubMetadata, date(trade).utc);
+  console.log(['stub', symbol, display, result ? result.value.toFixed(6) : 'null'].join('|'));
+  if (!result || Math.abs(result.value - expected) > 1e-6) {
+    console.error(`${symbol}: pinned ${expected}, got ${result ? result.value : 'null'}`); failed++;
+  } else if (result.value < 0) {
+    console.error(`${symbol}: negative bound stub escaped`); failed++;
+  }
+}
+// Render path: a price no cash-flow stream can justify must leave the cell
+// blank, and the real price must render the pinned string through the very
+// function the market-watch board calls.
+const renderCell = () => ({ textContent: 'stale', dataset: {}, removeAttribute() {} });
+const absurd = renderCell();
+y.updateYtmCell(absurd, { innerText: '1,000,000,000,000' }, stubMetadata.maturity, 'اراد115', stubMetadata, date('1405-06-30').utc);
+console.log(['render', 'absurd', JSON.stringify(absurd.textContent)].join('|'));
+if (absurd.textContent !== '' || absurd.dataset.ytmValue !== '') {
+  console.error('render: unjustifyable price produced ' + JSON.stringify(absurd.textContent)); failed++;
+}
+const pinned = renderCell();
+y.updateYtmCell(pinned, { innerText: '843,560' }, stubMetadata.maturity, 'اراد115', stubMetadata, date('1405-06-30').utc);
+console.log(['render', 'اراد115', JSON.stringify(pinned.textContent)].join('|'));
+if (pinned.textContent !== '41.93٪') {
+  console.error('render: expected "41.93٪", got ' + JSON.stringify(pinned.textContent)); failed++;
+}
 if (failed) { console.error(failed+' benchmark(s) exceeded tolerance'); process.exit(1); }

@@ -146,8 +146,14 @@
     const previousIndex = schedule.indexOf(previous);
     const groupStart = previousIndex - (previousIndex % paymentsPerYear);
     const yearDays = isJalaliLeap(schedule[groupStart].year) ? 366 : 365;
-    return (parValue * rate * passedDays / yearDays)
-      * (1 - ((rate / paymentsPerYear) * remainingDays) / (wholeDays - 1));
+    // Day clamping can stack the schedule so the final payment lands one day
+    // after the previous one (issue day 30 → 29 … maturity 30). The prorating
+    // adjustment would then divide by zero and NaN every cash flow downstream,
+    // so single-day periods take the coupon at face accrual instead.
+    const adjustment = wholeDays > 1
+      ? ((rate / paymentsPerYear) * remainingDays) / (wholeDays - 1)
+      : 0;
+    return (parValue * rate * passedDays / yearDays) * (1 - adjustment);
   }
 
   function couponBondYtm(cleanPrice, parValue, issue, maturity, rate, intervalMonths = 3, calculationUtc = Date.now()) {
@@ -176,6 +182,12 @@
       if (presentValue(middle) > dirtyPrice) low = middle;
       else high = middle;
     }
+    // Landing on a search bound means no rate in (-99%, 500%) prices these
+    // cash flows to the dirty price (or the stream is non-finite) — a real
+    // yield converges strictly inside the range. Returning the bound itself
+    // rendered "-99.00٪" to users (اراد115/116), so report "no value" and
+    // let the cell stay blank.
+    if (low <= -0.99 || high >= 5) return null;
     return ((low + high) / 2) * 100;
   }
 
@@ -222,8 +234,8 @@
     ) };
   }
 
-  function updateYtmCell(cell, priceCell, maturity, identity, metadata) {
-    const result = calculateYtm(parsePrice(priceCell.innerText), maturity, identity, metadata);
+  function updateYtmCell(cell, priceCell, maturity, identity, metadata, calculationUtc = Date.now()) {
+    const result = calculateYtm(parsePrice(priceCell.innerText), maturity, identity, metadata, calculationUtc);
     // Only a change in the displayed value can reorder the board; comparing
     // the raw value would re-sort on every invisible wiggle of the 3rd decimal.
     const text = result ? `${result.value.toFixed(2)}٪` : '';
@@ -354,7 +366,7 @@
   }
 
   if (typeof globalThis !== 'undefined') {
-    globalThis.__TSETMC_YTM_TEST__ = { jalaliToGregorianUtc, startOfUtcDay, couponSchedule, accruedInterest, couponBondYtm, calculateYtm, extractMaturity };
+    globalThis.__TSETMC_YTM_TEST__ = { jalaliToGregorianUtc, startOfUtcDay, couponSchedule, accruedInterest, couponBondYtm, calculateYtm, updateYtmCell, extractMaturity };
   }
   if (typeof document === 'undefined') return;
 
