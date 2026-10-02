@@ -39,4 +39,31 @@ for (const [symbol,price,trade,issue,maturity,rate,months,official] of categoryS
   console.log([symbol,official,actual.toFixed(4),error.toFixed(4)].join('|'));
   if (Math.abs(error)>0.02) failed++;
 }
+// Trade-date anchoring: YTM must not drift with time-of-day. اراد284 (specs
+// from bonds.json) at 916,050 on 1405/07/10 reads the official 40.18٪ no
+// matter when during the day it is evaluated; before anchoring it crept up to
+// 40.23٪ by midnight while the price never moved.
+const anchorSpecs = {
+  price: 916050,
+  name: 'مرابحه عام دولت284-ش.خ060419',
+  metadata: { parValue: 1000000, issue: date('1405-03-19'), maturity: date('1406-04-19'), rate: 0.23, intervalMonths: 6 },
+  maturity: date('1406-04-19'),
+};
+const anchorDay = date('1405-07-10').utc;
+const anchorSeen = [];
+for (const hours of [0, 6.5, 12, 15.5, 20.5, 23.99]) {
+  const result = y.calculateYtm(anchorSpecs.price, anchorSpecs.maturity, anchorSpecs.name, anchorSpecs.metadata, anchorDay + hours * 3_600_000);
+  if (!result) { console.error('anchor: no result @+'+hours+'h'); failed++; continue; }
+  anchorSeen.push(result.value);
+  console.log(['anchor@+'+hours+'h', '40.18', result.value.toFixed(4)].join('|'));
+  if (result.value.toFixed(2) !== '40.18') { console.error('anchor: expected 40.18 @+'+hours+'h, got '+result.value); failed++; }
+}
+if (anchorSeen.length > 1 && new Set(anchorSeen).size !== 1) {
+  console.error('anchor: intraday drift ' + anchorSeen.join(', '));
+  failed++;
+}
+if (y.startOfUtcDay(anchorDay + 15.5 * 3_600_000) !== anchorDay) {
+  console.error('startOfUtcDay does not truncate to day start');
+  failed++;
+}
 if (failed) { console.error(failed+' benchmark(s) exceeded tolerance'); process.exit(1); }

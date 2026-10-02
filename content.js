@@ -82,6 +82,18 @@
     return Date.UTC(gregorianYear, gregorianMonth, gregorianDay + 1);
   }
 
+  // YTM is a function of the trade date, not the wall clock: IFB's official
+  // figures are evaluated as of the settlement day, so anchoring to the start
+  // of the UTC day keeps values stable all day (matching official yields)
+  // instead of drifting upward with time-of-day — during TSETMC trading hours
+  // (09:00–15:00 Tehran = 05:30–11:30 UTC) the UTC date equals the Tehran
+  // trade date. Measured effect before the anchor: اراد284 @ 916,050 on
+  // 1405/07/10 read 40.21٪ in the afternoon vs the official 40.18٪.
+  function startOfUtcDay(ms) {
+    const date = new Date(ms);
+    return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
+  }
+
   function extractMaturity(name) {
     const matches = normalizeDigits(name).match(/(?<!\d)(?:(0[3-9]|1[4-9])|14(?:0[3-9]|1[4-9]))\d{4}(?!\d)/g);
     if (!matches?.length) return null;
@@ -168,7 +180,8 @@
   }
 
   function calculateYtm(price, maturity, name, metadata, calculationUtc = Date.now()) {
-    const days = Math.ceil((maturity.utc - calculationUtc) / 86_400_000);
+    const now = startOfUtcDay(calculationUtc);
+    const days = Math.ceil((maturity.utc - now) / 86_400_000);
     if (!price || days <= 0 || days > 10_000) return null;
 
     const parValue = metadata?.parValue || FACE_VALUE;
@@ -182,7 +195,7 @@
     const rate = metadata?.rate;
     if (!Number.isFinite(rate) || rate <= 0 || !metadata?.issue || !metadata?.intervalMonths) return null;
     const issue = { ...metadata.issue, utc: jalaliToGregorianUtc(metadata.issue.year, metadata.issue.month, metadata.issue.day) };
-    const value = couponBondYtm(price, parValue, issue, maturity, rate, metadata.intervalMonths, calculationUtc);
+    const value = couponBondYtm(price, parValue, issue, maturity, rate, metadata.intervalMonths, now);
     return Number.isFinite(value) && value > -100 && value < 500 ? { value, days } : null;
   }
 
@@ -341,7 +354,7 @@
   }
 
   if (typeof globalThis !== 'undefined') {
-    globalThis.__TSETMC_YTM_TEST__ = { jalaliToGregorianUtc, couponSchedule, accruedInterest, couponBondYtm, calculateYtm, extractMaturity };
+    globalThis.__TSETMC_YTM_TEST__ = { jalaliToGregorianUtc, startOfUtcDay, couponSchedule, accruedInterest, couponBondYtm, calculateYtm, extractMaturity };
   }
   if (typeof document === 'undefined') return;
 
