@@ -162,7 +162,11 @@
     const schedule = couponSchedule(issue, maturity, intervalMonths);
     const issueDay = schedule[0].utc;
     const atIssue = now === issueDay;
-    const previousIndex = schedule.findLastIndex(payment => payment.utc < now);
+    // Last payment *on or before* settlement: a trade landing exactly on a
+    // coupon date accrues 0 (same treatment as at-issue), matching the
+    // reference figures — strictly-before charged a full period there and
+    // mispriced on-coupon trades by up to 13.6 points (کرمان5126).
+    const previousIndex = schedule.findLastIndex(payment => payment.utc <= now);
     const nextIndex = schedule.findIndex(payment => payment.utc > now);
     if ((!atIssue && previousIndex < 0) || nextIndex < 0) return null;
     const payments = schedule.slice(nextIndex);

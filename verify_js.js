@@ -107,4 +107,36 @@ console.log(['render', 'اراد115', JSON.stringify(pinned.textContent)].join('
 if (pinned.textContent !== '41.93٪') {
   console.error('render: expected "41.93٪", got ' + JSON.stringify(pinned.textContent)); failed++;
 }
+// On-coupon settlement: a trade landing exactly on a coupon date must accrue
+// 0 (treated like at-issue, dirty = clean). Strict-< previously selected the
+// prior coupon and charged a full period, mispricing these four reference
+// rows by 2.9–13.6 points (کرمان5126: 11.15 vs 25.07). Pinned to the fixed
+// values; each trade date is its bond's coupon date.
+const onCouponSamples = [
+  // symbol, price, trade(=coupon date), issue, maturity, rate%, months, pinned, ref
+  ['آسمان08',   1000000, '1405-04-28', '1404-04-28', '1408-04-28', 23, 3, 25.060517, 25.06],
+  ['داروک072',   971000, '1405-03-04', '1402-09-04', '1407-09-04', 23, 3, 26.944342, 26.94],
+  ['دقاضی07',   1000000, '1404-06-17', '1403-09-17', '1407-09-17', 23, 3, 25.053478, 25.05],
+  ['کرمان5126', 1000000, '1405-06-23', '1402-12-23', '1405-12-23', 23, 3, 25.067057, 25.07],
+];
+for (const [symbol, price, trade, issue, maturity, rate, months, pinned, ref] of onCouponSamples) {
+  const meta = { parValue: 1000000, issue: date(issue), rate: rate/100, intervalMonths: months };
+  const result = y.calculateYtm(price, date(maturity), symbol, meta, date(trade).utc);
+  console.log(['onCoupon', symbol, ref, result ? result.value.toFixed(6) : 'null'].join('|'));
+  if (!result || Math.abs(result.value - pinned) > 1e-6) {
+    console.error(`${symbol}: on-coupon pinned ${pinned}, got ${result ? result.value : 'null'}`); failed++;
+  }
+  // The settlement-day accrual itself: previous coupon = the coupon date the
+  // trade lands on, so passedDays = 0 and accrued must be exactly 0.
+  const sched = y.couponSchedule(date(issue), date(maturity), months);
+  const idx = sched.findIndex(p => p.utc === date(trade).utc);
+  if (idx < 0) {
+    console.error(`${symbol}: trade date is not a coupon date in the schedule`); failed++;
+  } else {
+    const accr = y.accruedInterest(1000000, rate/100, 12/months, sched[idx], sched[idx+1], sched[idx].utc, sched);
+    if (accr !== 0) {
+      console.error(`${symbol}: accrued at coupon date must be 0, got ${accr}`); failed++;
+    }
+  }
+}
 if (failed) { console.error(failed+' benchmark(s) exceeded tolerance'); process.exit(1); }
