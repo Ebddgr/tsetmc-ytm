@@ -20,7 +20,10 @@ const matured = rows.get(t.normalize('اخزا001'));
 check('matured row has null ytm', matured?.referenceYtm === null);
 let numeric = 0, blank = 0;
 for (const [, v] of rows) (v.referenceYtm === null ? blank++ : numeric++);
-check('numeric ytm rows near 507', Math.abs(numeric - 507) <= 2, '(' + numeric + ' numeric / ' + blank + ' blank)');
+// The snapshot is refreshed on every live fetch; the pin tracks the
+// 2026-10-03 snapshot (518 numeric) with a small tolerance for intraday
+// rows maturing between fetches.
+check('numeric ytm rows near 518', Math.abs(numeric - 518) <= 2, '(' + numeric + ' numeric / ' + blank + ' blank)');
 check('maturities 8-digit', JSON.stringify(t.maturitiesFromName('اجاره تابان فردادماوند14080220')) === '[{"year":1408,"month":2,"day":20}]');
 check('maturities 6-digit both centuries', t.maturitiesFromName('اسنادخزانه-م8بودجه80-990521').some(d => d.year === 1399));
 check('maturities stock name empty', t.maturitiesFromName('گروه پتروشيمي تابان فردا').length === 0);

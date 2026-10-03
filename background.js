@@ -158,9 +158,10 @@ async function loadLiveIndex() {
 }
 // Reads official instrument specs (par value, issue/maturity, nominal rate,
 // coupon interval) from an IFB instrument page. The issue date is not shown
-// directly; it is recovered from the coupon schedule (dates sharing the
-// maturity's day-of-month at the coupon interval) and needs a second
-// aligned date to be trusted.
+// directly on current pages: 'تاریخ انتشار' (public offering) or
+// 'تاریخ عرضه' (private placement). When neither is present it is recovered
+// from the coupon schedule (dates sharing the maturity's day-of-month at the
+// coupon interval); the fallback needs a second aligned date to be trusted.
 function parseInstrument(html) {
   const fields = {};
   for (const match of html.matchAll(/<span[^>]*>([^<]{2,40})<\/span>\s*<\/td>\s*<td[^>]*>\s*([^<]{0,80})</g)) {
@@ -168,12 +169,15 @@ function parseInstrument(html) {
   }
   const maturity = parseJalali(fields['تاریخسررسید']);
   const rate = parseNumber(fields['نرخسوداسمی']);
-  const intervalMonths = parseInterval(fields['مواعدپرداختنسود']);
+  // The live interval label was misspelled 'مواعد پرداخت نسود' (stray ن)
+  // until 2026; accept both spellings, preferring the first that parses.
+  const intervalMonths = parseInterval(fields['مواعدپرداختسود']) ?? parseInterval(fields['مواعدپرداختنسود']);
   const parValue = parseNumber(fields['مبلغاسمیهرورقه']);
-  let issue = null;
-  if (maturity && intervalMonths && Number.isFinite(rate) && rate > 0) {
+  let issue = parseJalali(fields['تاریخانتشار']) || parseJalali(fields['تاریخعرضه']);
+  if (!issue && maturity && intervalMonths && Number.isFinite(rate) && rate > 0) {
     const start = html.indexOf('نرخ سود اسمی');
-    const end = html.indexOf('مواعد پرداخت سود');
+    // Prefer the literal marker; older pages carry only the misspelled row.
+    const end = html.indexOf('مواعد پرداخت سود') >= 0 ? html.indexOf('مواعد پرداخت سود') : html.indexOf('مواعد پرداخت نسود');
     if (start >= 0 && end > start) {
       const window = html.slice(start, end);
       const candidates = new Map();
@@ -191,7 +195,7 @@ function parseInstrument(html) {
       }
     }
   }
-  return { parValue, issue, maturity, rate, intervalMonths };
+  return { parValue, issue, maturity, rate, intervalMonths, category: fields['نوعابزار'] || '' };
 }
 async function loadBondDetail(pageId) {
   if (detailCache.has(pageId)) return detailCache.get(pageId);

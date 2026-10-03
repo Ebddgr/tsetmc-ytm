@@ -6,11 +6,23 @@ const vm = require('vm');
 const ctx = { console, URL, fetch, chrome: { runtime: { getURL: p => p, onMessage: { addListener() {} } } } };
 vm.runInNewContext(fs.readFileSync('background.js', 'utf8'), ctx);
 const t = ctx.__TSETMC_YTM_BG_TEST__;
-const CATEGORY_BY_TYPE = { 'مرابحه': 'صكوك مرابحه', 'اجاره': 'صكوك اجاره', 'اسناد خزانه': 'اسناد خزانه اسلامي', 'گواهي اعتبار مولد': 'اوراق گواهي اعتبار مولد', 'گواهی اعتبار مولد': 'اوراق گواهي اعتبار مولد' };
+const CATEGORY_BY_TYPE = { 'مرابحه': 'صكوك مرابحه', 'اجاره': 'صكوك اجاره', 'اسناد خزانه': 'اسناد خزانه اسلامي', 'گواهي اعتبار مولد': 'اوراق گواهي اعتبار مولد', 'گواهی اعتبار مولد': 'اوراق گواهي اعتبار مولد', 'گام': 'اوراق گواهي اعتبار مولد' };
+// Catalog par values are stored with thousands separators ('1,000,000').
+const fmtPar = value => value === null ? '1,000,000' : String(value).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+// IFB hangs when it is filtered or overloaded, so every attempt is bounded
+// the same way background.js bounds its own fetches.
+const FETCH_TIMEOUT = 20_000;
 async function fetchText(url, attempts = 3) {
   for (let i = 1; i <= attempts; i++) {
-    try { const r = await fetch(url); if (!r.ok) throw new Error('HTTP ' + r.status); return await r.text(); }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
+    try {
+      const r = await fetch(url, { signal: controller.signal });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return await r.text();
+    }
     catch (e) { if (i === attempts) throw e; await new Promise(r => setTimeout(r, 1500 * i)); }
+    finally { clearTimeout(timer); }
   }
 }
 function titlesByPageId(html) {
@@ -53,7 +65,7 @@ async function main() {
     const record = {
       symbol, officialSymbol: symbol, pageId: item.pageId, name,
       category: CATEGORY_BY_TYPE[detail.category || ''] || '',
-      parValue: detail.parValue === null ? '1,000,000' : String(detail.parValue),
+      parValue: fmtPar(detail.parValue),
       issue: zeroCoupon ? (detail.issue ? fmt(detail.issue) : fmt(item.referenceMaturity)) : fmt(detail.issue),
       maturity: fmt(detail.maturity || item.referenceMaturity),
       rate: zeroCoupon ? '0' : String(rate),

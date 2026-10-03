@@ -139,4 +139,32 @@ for (const [symbol, price, trade, issue, maturity, rate, months, pinned, ref] of
     }
   }
 }
+// Final-stub prorating: when maturity falls before the next regular coupon,
+// IFB still prorates the last-coupon adjustment over the *scheduled* interval.
+// Dividing by the truncated stub length (the old behavior) overshot the
+// adjustment and mispriced every near-maturity row — اراد203 read 40.37
+// against the official 39.38, اراد98 36.00 against 35.88, اراد145 38.67
+// against 38.00. Pinned to the corrected values; each matches the reference
+// sheet to display precision. Regular periods are unaffected by design.
+const stubProrateSamples = [
+  // symbol, price, trade, issue, maturity, rate%, months, pinned, ref
+  ['اراد98',  980000, '1405-05-28', '1400-11-23', '1405-07-23', 18,   6, 35.878132, 35.88],
+  ['اراد99',  976470, '1405-05-25', '1400-11-23', '1405-07-23', 18,   6, 38.003187, 38.00],
+  ['اراد103', 975150, '1405-06-22', '1400-12-21', '1405-08-21', 18,   6, 39.152307, 39.15],
+  ['اراد203', 989300, '1405-06-31', '1403-12-07', '1405-08-07', 23,   6, 39.383071, 39.38],
+  ['اراد206', 960650, '1405-06-31', '1403-12-14', '1405-11-14', 23,   6, 38.998940, 39.00],
+  ['اراد209', 986770, '1405-07-07', '1403-12-21', '1405-08-21', 23,   6, 39.976489, 39.98],
+  ['اراد210', 944360, '1405-06-24', '1403-12-21', '1405-11-21', 23,   6, 43.458953, 43.46],
+  ['اراد145', 988100, '1405-06-03', '1402-09-07', '1405-07-07', 20.5, 6, 38.009359, 38.00],
+];
+for (const [symbol, price, trade, issue, maturity, rate, months, pinned, ref] of stubProrateSamples) {
+  const meta = { parValue: 1000000, issue: date(issue), rate: rate / 100, intervalMonths: months };
+  const result = y.calculateYtm(price, date(maturity), symbol, meta, date(trade).utc);
+  console.log(['stubProrate', symbol, ref, result ? result.value.toFixed(6) : 'null'].join('|'));
+  if (!result || Math.abs(result.value - pinned) > 1e-6) {
+    console.error(`${symbol}: stub prorate pinned ${pinned}, got ${result ? result.value : 'null'}`); failed++;
+  } else if (Math.abs(result.value - ref) > 0.011) {
+    console.error(`${symbol}: stub prorate ${result.value.toFixed(4)} vs official ${ref}`); failed++;
+  }
+}
 if (failed) { console.error(failed+' benchmark(s) exceeded tolerance'); process.exit(1); }

@@ -146,12 +146,21 @@
     const previousIndex = schedule.indexOf(previous);
     const groupStart = previousIndex - (previousIndex % paymentsPerYear);
     const yearDays = isJalaliLeap(schedule[groupStart].year) ? 366 : 365;
+    // The prorating adjustment divides by the *scheduled* coupon period, not
+    // the actual one: a final stub (maturity falling before the next regular
+    // coupon) still prorates over the full interval, as IFB does. Using the
+    // truncated stub length overshot the adjustment and mispriced every
+    // near-maturity bond (اراد203 read 40.37 vs the official 39.38; اراد98
+    // 36.00 vs 35.88). Regular periods are untouched — there the scheduled
+    // date *is* the next payment — so the 400+ matching rows stay identical.
+    const scheduledNext = addJalaliMonths(previous, 12 / paymentsPerYear, schedule[0].day === daysInJalaliMonth(schedule[0].year, schedule[0].month));
+    const periodDays = (scheduledNext.utc - previousUtc) / 86_400_000;
     // Day clamping can stack the schedule so the final payment lands one day
     // after the previous one (issue day 30 → 29 … maturity 30). The prorating
     // adjustment would then divide by zero and NaN every cash flow downstream,
     // so single-day periods take the coupon at face accrual instead.
-    const adjustment = wholeDays > 1
-      ? ((rate / paymentsPerYear) * remainingDays) / (wholeDays - 1)
+    const adjustment = wholeDays > 1 && periodDays > 1
+      ? ((rate / paymentsPerYear) * remainingDays) / (periodDays - 1)
       : 0;
     return (parValue * rate * passedDays / yearDays) * (1 - adjustment);
   }

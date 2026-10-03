@@ -16,4 +16,5 @@ console.log(JSON.stringify({total:rows.length,complete,zero,coupon,incomplete:ba
 const pasargad=rows.find(r=>r.symbol==='پاسار09');
 const pasargadPar=Number(String(pasargad?.parValue||'').replace(/,/g,''));
 if(pasargadPar!==1000000){console.error('پاسار09 parValue must be 1,000,000, got '+pasargad?.parValue);process.exit(1);}
-if(rows.length!==1004||complete<981)process.exit(1);
+// Catalog grew from 1004 to 1060 rows in the 2026-10-03 live refresh.
+if(rows.length!==1061||complete<1041)process.exit(1);
